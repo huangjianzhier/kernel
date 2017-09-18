@@ -775,6 +775,44 @@ static int rkisp1_isp_sd_enum_mbus_code(struct v4l2_subdev *sd,
 	return 0;
 }
 
+/* For compatibility with UVC program, we have to use this funciton,
+ * to allow this driver run out-of-box.
+ * If you are writing your own applications, please don't depend on this funciton,
+ * each media entity should be configured properly by userspace before streamon.
+ */
+static void __reset_entities_config(struct rkisp1_device *isp_dev)
+{
+	struct rkisp1_isp_subdev *isp_sd = &isp_dev->isp_sdev;
+	struct v4l2_subdev_format fmt;
+	const struct rkisp1_fmt *cif_fmt;
+
+	fmt.pad = 0;
+	v4l2_subdev_call(isp_dev->subdevs[RKISP1_SD_SENSOR],
+			       pad, get_fmt, NULL, &fmt);
+
+	if (fmt.format.code != isp_sd->in_fmt.mbus_code ||
+	    fmt.format.width != isp_sd->in_acqui.width ||
+	    fmt.format.height != isp_sd->in_acqui.height) {
+		v4l2_warn(&isp_dev->v4l2_dev,
+			  "Reset subdev settigs to default......\n");
+	}
+
+	isp_sd->in_acqui.width = fmt.format.width;
+	isp_sd->in_acqui.height = fmt.format.height;
+	cif_fmt = rkisp1_isp_sd_find_fmt(RKISP1_ISP_PAD_SINK,
+						fmt.format.code, -1);
+	if (!cif_fmt) {
+		v4l2_warn(&isp_dev->v4l2_dev,
+			  "Unsuppoted sensor input format......\n");
+		return;
+	}
+
+	isp_sd->in_fmt = *cif_fmt;
+	isp_sd->out_win = isp_sd->in_acqui;
+	isp_dev->stream[RKISP1_STREAM_SP].dcrop = isp_sd->out_win;
+	isp_dev->stream[RKISP1_STREAM_MP].dcrop = isp_sd->out_win;
+}
+
 #define sd_to_isp_sd(_sd) container_of(_sd, struct rkisp1_isp_subdev, sd)
 static int rkisp1_isp_sd_get_fmt(struct v4l2_subdev *sd,
 				 struct v4l2_subdev_pad_config *cfg,
@@ -782,6 +820,8 @@ static int rkisp1_isp_sd_get_fmt(struct v4l2_subdev *sd,
 {
 	struct v4l2_mbus_framefmt *mf = &fmt->format;
 	struct rkisp1_isp_subdev *isp_sd = sd_to_isp_sd(sd);
+
+	__reset_entities_config(sd_to_isp_dev(sd));
 
 	if ((fmt->pad != RKISP1_ISP_PAD_SINK) &&
 	    (fmt->pad != RKISP1_ISP_PAD_SOURCE_PATH))
