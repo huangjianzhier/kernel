@@ -993,10 +993,13 @@ static void mp_enable_mi(struct rkisp1_stream *stream)
 	const struct rkisp1_fmt *cif_fmt = out_frm_fmt->fmt;
 
 	mi_ctrl_mp_disable(base);
-	if (cif_fmt->fmt_type == FMT_BAYER)
+	if (cif_fmt->fmt_type == FMT_BAYER) {
+		stream->mp_config.raw_enable = true;
 		mi_ctrl_mpraw_enable(base);
-	else if (cif_fmt->fmt_type == FMT_YUV)
+	} else if (cif_fmt->fmt_type == FMT_YUV) {
+		stream->mp_config.raw_enable = false;
 		mi_ctrl_mpyuv_enable(base);
+	}
 }
 
 static void sp_enable_mi(struct rkisp1_stream *stream)
@@ -1222,8 +1225,7 @@ static int mi_frame_end(struct rkisp1_stream *stream)
 	cif_fmt = stream->output.fmt;
 	if (!stream->next_buf && stream->id == RKISP1_STREAM_MP) {
 		stream->stall = dev->out_of_buffer_stall;
-	} else if (stream->next_buf &&
-		   (vb2_dma_contig_plane_dma_addr
+	} else if (stream->next_buf && (vb2_dma_contig_plane_dma_addr
 		    (&stream->next_buf->vb.vb2_buf, 0)
 		    != readl(y_base_addr))) {
 		v4l2_warn(&dev->v4l2_dev,
@@ -1290,17 +1292,15 @@ static int mi_frame_end(struct rkisp1_stream *stream)
 		}
 	}
 
-	if (stream->next_buf != stream->curr_buf) {
-		if (!stream->next_buf) {
-			stream->ops->disable_mi(stream);
-		} else {
-			if (!stream->curr_buf) {
-				/* re-enable */
-				stream->ops->clr_frame_end_int(base);
-				stream->ops->enable_mi(stream);
-			}
-			stream->ops->update_mi(stream);
+	if (!stream->next_buf) {
+		stream->ops->disable_mi(stream);
+	} else {
+		if (!stream->curr_buf) {
+			/* re-enable */
+			stream->ops->clr_frame_end_int(base);
+			stream->ops->enable_mi(stream);
 		}
+		stream->ops->update_mi(stream);
 	}
 
 	stream->stall = false;
@@ -1505,24 +1505,12 @@ rkisp1_start_streaming(struct vb2_queue *queue, unsigned int count)
 	struct rkisp1_vdev_node *node = &stream->vnode;
 	struct rkisp1_device *dev = stream->ispdev;
 	struct v4l2_device *v4l2_dev = &stream->ispdev->v4l2_dev;
-	struct cif_frm_fmt *video_fmt = &stream->output;
-	struct cif_frm_fmt remote_fmt;
 	int ret = 0;
 
 	ret = media_entity_pipeline_start(&node->vdev.entity, &node->pipe.pipe);
 	if (ret < 0) {
 		v4l2_err(&dev->v4l2_dev, "start pipeline failed %d\n", ret);
 		return ret;
-	}
-
-	ret = get_format(stream, &remote_fmt);
-	if (ret < 0)
-		return ret;
-
-	if (video_fmt->fmt->fourcc != remote_fmt.fmt->fourcc ||
-	    video_fmt->mbus.height != remote_fmt.mbus.height ||
-	    video_fmt->mbus.width != remote_fmt.mbus.width){
-		v4l2_warn(v4l2_dev, "check video format failed\n");
 	}
 
 	ret = node->pipe.open(&node->pipe, &node->vdev.entity, true);
