@@ -481,6 +481,10 @@ static int cif_isp10_stop(struct rkisp1_device *dev)
 		 readl(base + CIF_ISP_CTRL),
 		 readl(base + CIF_MIPI_CTRL));
 
+	writel(CIF_IRCL_MIPI_SW_RST | CIF_IRCL_ISP_SW_RST,
+		dev->base_addr + CIF_IRCL);
+	writel(0x0, base + CIF_IRCL);
+
 	return 0;
 }
 
