@@ -103,7 +103,7 @@ void rk_send_power_key(int state)
 }
 EXPORT_SYMBOL(rk_send_power_key);
 
-void rk_send_wakeup_key(void)
+void rk_send_wakeup_key(void)  //电源按键唤醒
 {
 	if (!sinput_dev)
 		return;
@@ -122,24 +122,33 @@ static void keys_timer(unsigned long _data)
 	struct input_dev *input = pdata->input;
 	int state;
 
-	if (button->type == TYPE_GPIO)
+	if (button->type == TYPE_GPIO)//gpio按键的状态
 		state = !!((gpio_get_value(button->gpio) ? 1 : 0) ^
 			   button->active_low);
-	else
-		state = !!button->adc_state;
+	else{
+		state = !!button->adc_state;//adc按键的状态，按下是1
+		//printk("key:%d,%d,%s\n",state,__LINE__,__FUNCTION__);
+		}
 
-	if (button->state != state) {
+	if (button->state != state) {//按下和松开时上报
 		button->state = state;
 		input_event(input, EV_KEY, button->code, button->state);
 		key_dbg(pdata, "%skey[%s]: report event[%d] state[%d]\n",
 			button->type == TYPE_ADC ? "adc" : "gpio",
 			button->desc, button->code, button->state);
+		
+		printk("%skey[%s]: report event[%d] state[%d]\n",
+			(button->type == TYPE_ADC) ? "adc" : "gpio",
+			button->desc, button->code, button->state);
+		printk("key:%d,%d,%s\n",button->state,state,__FUNCTION__);
+		//input_sync(input);
 		input_event(input, EV_KEY, button->code, button->state);
-		input_sync(input);
+		input_sync(input);  /*通知接收者,一个报告发送完毕*/
 	}
 
-	if (state)
+	if (state){//如果按下延时10ms；
 		mod_timer(&button->timer, jiffies + DEBOUNCE_JIFFIES);
+		}
 }
 
 static irqreturn_t keys_isr(int irq, void *dev_id)
@@ -156,10 +165,14 @@ static irqreturn_t keys_isr(int irq, void *dev_id)
 			"wakeup: %skey[%s]: report event[%d] state[%d]\n",
 			(button->type == TYPE_ADC) ? "adc" : "gpio",
 			button->desc, button->code, button->state);
-		input_event(input, EV_KEY, button->code, button->state);
+		printk("wakeup: %skey[%s]: report event[%d] state[%d]\n",
+			(button->type == TYPE_ADC) ? "adc" : "gpio",
+			button->desc, button->code, button->state);
+		input_event(input, EV_KEY, button->code, button->state);  //上报事件
 		input_sync(input);
 	}
-	if (button->wakeup)
+	printk("key:%d,%d,%s\n",button->state,__LINE__,__FUNCTION__);
+	if (button->wakeup)//将系统从深度休眠中唤醒并保证系统wakup 一段时间用
 		wake_lock_timeout(&pdata->wake_lock, WAKE_LOCK_JIFFIES);
 	mod_timer(&button->timer, jiffies + DEBOUNCE_JIFFIES);
 
@@ -190,14 +203,15 @@ static int rk_key_adc_iio_read(struct rk_keys_drvdata *data)
 
 	if (!channel)
 		return INVALID_ADVALUE;
-	ret = iio_read_channel_raw(channel, &val);
+	ret = iio_read_channel_raw(channel, &val); //从按键通道上获取值
 	if (ret < 0) {
 		pr_err("read channel() error: %d\n", ret);
 		return ret;
 	}
 	return val;
 }
-
+//系统开机会启一个工作队列，
+//每100ms周期性调用一次检测有没有按键触发
 static void adc_key_poll(struct work_struct *work)
 {
 	struct rk_keys_drvdata *ddata;
@@ -205,11 +219,12 @@ static void adc_key_poll(struct work_struct *work)
 
 	ddata = container_of(work, struct rk_keys_drvdata, adc_poll_work.work);
 	if (!ddata->in_suspend) {
-		result = rk_key_adc_iio_read(ddata);
+		result = rk_key_adc_iio_read(ddata);//获取ad值
 		if (result > INVALID_ADVALUE &&
 		    result < (EMPTY_DEFAULT_ADVALUE - ddata->drift_advalue))
-			ddata->result = result;
-		for (i = 0; i < ddata->nbuttons; i++) {
+			ddata->result = result;  
+	//	printk("key:%d,%d,%s\n",result,__LINE__,__FUNCTION__);
+		for (i = 0; i < ddata->nbuttons; i++) {//ddata->drift_advalue=70
 			struct rk_keys_button *button = &ddata->button[i];
 
 			if (!button->adc_value)
@@ -222,10 +237,12 @@ static void adc_key_poll(struct work_struct *work)
 			if (button->state != button->adc_state)
 				mod_timer(&button->timer,
 					  jiffies + DEBOUNCE_JIFFIES);
+		//	printk("key:%d,%d,%d,%s\n",button->adc_value,result,__LINE__,__FUNCTION__);
+		//	printk("key:%d,%d,%d,%s\n",button->state,button->adc_state,__LINE__,__FUNCTION__);
 		}
 	}
 
-	schedule_delayed_work(&ddata->adc_poll_work, ADC_SAMPLE_JIFFIES);
+	schedule_delayed_work(&ddata->adc_poll_work, ADC_SAMPLE_JIFFIES);//100ms
 }
 
 static int rk_key_type_get(struct device_node *node,
@@ -233,7 +250,7 @@ static int rk_key_type_get(struct device_node *node,
 {
 	u32 adc_value;
 
-	if (!of_property_read_u32(node, "rockchip,adc_value", &adc_value))
+	if (!of_property_read_u32(node, "rockchip,adc_value", &adc_value)) //获取按键ad值
 		return TYPE_ADC;
 	else if (of_get_gpio(node, 0) >= 0)
 		return TYPE_GPIO;
@@ -255,7 +272,7 @@ static int rk_keys_parse_dt(struct rk_keys_drvdata *pdata,
 	else
 		pdata->drift_advalue = (int)drift;
 
-	chan = iio_channel_get(&pdev->dev, NULL);
+	chan = iio_channel_get(&pdev->dev, NULL); //获取ad通道
 	if (IS_ERR(chan)) {
 		dev_info(&pdev->dev, "no io-channels defined\n");
 		chan = NULL;
@@ -273,7 +290,7 @@ static int rk_keys_parse_dt(struct rk_keys_drvdata *pdata,
 		pdata->button[i].desc =
 		    of_get_property(child_node, "label", NULL);
 		pdata->button[i].type =
-		    rk_key_type_get(child_node, &pdata->button[i]);
+		    rk_key_type_get(child_node, &pdata->button[i]);//得到key类型
 		switch (pdata->button[i].type) {
 		case TYPE_GPIO:
 			gpio = of_get_gpio_flags(child_node, 0, &flags);
@@ -303,6 +320,7 @@ static int rk_keys_parse_dt(struct rk_keys_drvdata *pdata,
 				goto error_ret;
 			}
 			pdata->button[i].adc_value = adc_value;
+			printk("key:%d,%d,%s\n",adc_value,__LINE__,__FUNCTION__);
 			break;
 
 		default:
@@ -323,21 +341,21 @@ error_ret:
 static int keys_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct device_node *np = pdev->dev.of_node;
+	struct device_node *np = pdev->dev.of_node; //设备dts节点
 	struct rk_keys_drvdata *ddata = NULL;
 	struct input_dev *input = NULL;
 	int i, error = 0;
 	int wakeup, key_num = 0;
 
-	key_num = of_get_child_count(np);
+	key_num = of_get_child_count(np);  //得到按键个数
 	if (key_num == 0)
 		dev_info(&pdev->dev, "no key defined\n");
 
 	ddata = devm_kzalloc(dev, sizeof(struct rk_keys_drvdata) +
 			     key_num * sizeof(struct rk_keys_button),
-			     GFP_KERNEL);
+			     GFP_KERNEL);  //分配内存
 
-	input = devm_input_allocate_device(dev);
+	input = devm_input_allocate_device(dev);  /*分配一个输入设备结构体*/
 	if (!ddata || !input) {
 		error = -ENOMEM;
 		return error;
@@ -357,7 +375,7 @@ static int keys_probe(struct platform_device *pdev)
 
 	/* parse info from dt */
 	ddata->nbuttons = key_num;
-	error = rk_keys_parse_dt(ddata, pdev);
+	error = rk_keys_parse_dt(ddata, pdev);//解析按键的dts
 	if (error)
 		goto fail0;
 
@@ -365,18 +383,20 @@ static int keys_probe(struct platform_device *pdev)
 	if (ddata->rep)
 		__set_bit(EV_REP, input->evbit);
 
-	error = input_register_device(input);
+	error = input_register_device(input); //注册输入设备
 	if (error) {
 		pr_err("gpio-keys: Unable to register input device, error: %d\n",
 		       error);
 		goto fail0;
 	}
 	sinput_dev = input;
-
+//每个key都会注册一个定时器函数来处理状态变化
+//并通知用户空间。
 	for (i = 0; i < ddata->nbuttons; i++) {
 		struct rk_keys_button *button = &ddata->button[i];
 
-		if (button->code) {
+		if (button->code) {//adc按键
+			//实现赋值并初始化定时器
 			setup_timer(&button->timer,
 				    keys_timer, (unsigned long)button);
 		}
@@ -437,14 +457,16 @@ static int keys_probe(struct platform_device *pdev)
 				goto fail1;
 			}
 		}
+		printk("key:%d,%s\n",__LINE__,__FUNCTION__);
 	}
 
 	input_set_capability(input, EV_KEY, KEY_WAKEUP);
 	/* adc polling work */
-	if (ddata->chan) {
+	if (ddata->chan) {//定时中断函数
 		INIT_DELAYED_WORK(&ddata->adc_poll_work, adc_key_poll);
 		schedule_delayed_work(&ddata->adc_poll_work,
 				      ADC_SAMPLE_JIFFIES);
+		printk("key:%d,%s\n",__LINE__,__FUNCTION__);
 	}
 
 	return error;
