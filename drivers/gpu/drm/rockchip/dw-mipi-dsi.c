@@ -527,6 +527,7 @@ static int dw_mipi_dsi_phy_init(struct dw_mipi_dsi *dsi)
 	dw_mipi_dsi_phy_write(dsi, 0x17, INPUT_DIVIDER(dsi->dphy.input_div));
 	val = LOOP_DIV_LOW_SEL(dsi->dphy.feedback_div) | LOW_PROGRAM_EN;
 	dw_mipi_dsi_phy_write(dsi, 0x18, val);
+	dw_mipi_dsi_phy_write(dsi, 0x19, PLL_LOOP_DIV_EN | PLL_INPUT_DIV_EN);
 	val = LOOP_DIV_HIGH_SEL(dsi->dphy.feedback_div) | HIGH_PROGRAM_EN;
 	dw_mipi_dsi_phy_write(dsi, 0x18, val);
 	dw_mipi_dsi_phy_write(dsi, 0x19, PLL_LOOP_DIV_EN | PLL_INPUT_DIV_EN);
@@ -673,35 +674,20 @@ static int dw_mipi_dsi_host_attach(struct mipi_dsi_host *host,
 				   struct mipi_dsi_device *device)
 {
 	struct dw_mipi_dsi *dsi = host_to_dsi(host);
-	int lanes;
 
 	if (dsi->master)
 		return 0;
 
-	lanes = dsi->slave ? device->lanes / 2 : device->lanes;
-
-	if (lanes > dsi->pdata->max_data_lanes) {
+	if (device->lanes < 0 || device->lanes > 8) {
 		dev_err(dsi->dev, "the number of data lanes(%u) is too many\n",
-				lanes);
+			device->lanes);
 		return -EINVAL;
 	}
 
-	if (!(device->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)) {
-		dev_err(dsi->dev, "device mode is unsupported\n");
-		return -EINVAL;
-	}
-
-	dsi->lanes = lanes;
+	dsi->lanes = device->lanes;
 	dsi->channel = device->channel;
 	dsi->format = device->format;
 	dsi->mode_flags = device->mode_flags;
-
-	if (dsi->slave) {
-		dsi->slave->lanes = lanes;
-		dsi->slave->channel = device->channel;
-		dsi->slave->format = device->format;
-		dsi->slave->mode_flags = device->mode_flags;
-	}
 
 	dsi->panel = of_drm_find_panel(device->dev.of_node);
 	if (!dsi->panel) {
@@ -1111,6 +1097,12 @@ static void rockchip_dsi_pre_init(struct dw_mipi_dsi *dsi)
 		return;
 	}
 
+	/* MIPI DSI APB software reset request. */
+	reset_control_assert(dsi->rst);
+	udelay(10);
+	reset_control_deassert(dsi->rst);
+	udelay(10);
+
 	if (clk_prepare_enable(dsi->dphy.ref_clk)) {
 		dev_err(dsi->dev, "Failed to enable pllref_clk\n");
 		return;
@@ -1124,14 +1116,6 @@ static void rockchip_dsi_pre_init(struct dw_mipi_dsi *dsi)
 	}
 
 	pm_runtime_get_sync(dsi->dev);
-
-	if (dsi->rst) {
-		/* MIPI DSI APB software reset request. */
-		reset_control_assert(dsi->rst);
-		udelay(10);
-		reset_control_deassert(dsi->rst);
-		udelay(10);
-	}
 
 	dev_info(dsi->dev, "final DSI-Link bandwidth: %u x %d Mbps\n",
 		 dsi->lane_mbps, dsi->lanes);
@@ -1330,6 +1314,12 @@ static int rockchip_dsi_dual_channel_probe(struct dw_mipi_dsi *dsi)
 			return -EPROBE_DEFER;
 
 		dsi->slave->master = dsi;
+		dsi->lanes /= 2;
+
+		dsi->slave->lanes = dsi->lanes;
+		dsi->slave->channel = dsi->channel;
+		dsi->slave->format = dsi->format;
+		dsi->slave->mode_flags = dsi->mode_flags;
 	}
 
 	return 0;
@@ -1486,48 +1476,7 @@ static const struct component_ops dw_mipi_dsi_ops = {
 	.unbind	= dw_mipi_dsi_unbind,
 };
 
-static int rockchip_dsi_get_reset_handle(struct dw_mipi_dsi *dsi)
-{
-	struct device *dev = dsi->dev;
-
-	dsi->rst = devm_reset_control_get_optional(dev, "apb");
-	if (IS_ERR(dsi->rst)) {
-		dev_info(dev, "no reset control specified\n");
-		dsi->rst = NULL;
-	}
-
-	return 0;
-}
-
-static int rockchip_dsi_grf_regmap(struct dw_mipi_dsi *dsi)
-{
-	struct device_node *np = dsi->dev->of_node;
-
-	dsi->grf_regmap = syscon_regmap_lookup_by_phandle(np, "rockchip,grf");
-	if (IS_ERR(dsi->grf_regmap)) {
-		dev_err(dsi->dev, "Unable to get rockchip,grf\n");
-		return PTR_ERR(dsi->grf_regmap);
-	}
-
-	return 0;
-}
-
-static int rockchip_dsi_clk_get(struct dw_mipi_dsi *dsi)
-{
-	struct device *dev = dsi->dev;
-	int ret;
-
-	dsi->pclk = devm_clk_get(dev, "pclk");
-	if (IS_ERR(dsi->pclk)) {
-		ret = PTR_ERR(dsi->pclk);
-		dev_err(dev, "Unable to get pclk: %d\n", ret);
-		return ret;
-	}
-
-	return 0;
-}
-
-static int rockchip_dsi_dphy_parse(struct dw_mipi_dsi *dsi)
+static int mipi_dphy_attach(struct dw_mipi_dsi *dsi)
 {
 	struct device *dev = dsi->dev;
 	int ret;
@@ -1572,35 +1521,16 @@ static int rockchip_dsi_dphy_parse(struct dw_mipi_dsi *dsi)
 	return 0;
 }
 
-static int rockchip_dsi_ioremap_resource(struct platform_device *pdev,
-					 struct dw_mipi_dsi *dsi)
-{
-	struct device *dev = &pdev->dev;
-	struct resource *res;
-
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -ENODEV;
-
-	dsi->base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(dsi->base))
-		return PTR_ERR(dsi->base);
-
-	return 0;
-}
-
 static int dw_mipi_dsi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	const struct of_device_id *of_id =
-			of_match_device(dw_mipi_dsi_dt_ids, dev);
-	const struct dw_mipi_dsi_plat_data *pdata = of_id->data;
 	struct dw_mipi_dsi *dsi;
 	struct device_node *np = dev->of_node;
+	struct resource *res;
 	int ret;
 	int dsi_id;
 
-	dsi = devm_kzalloc(&pdev->dev, sizeof(*dsi), GFP_KERNEL);
+	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
 	if (!dsi)
 		return -ENOMEM;
 
@@ -1610,23 +1540,45 @@ static int dw_mipi_dsi_probe(struct platform_device *pdev)
 
 	dsi->id = dsi_id;
 	dsi->dev = dev;
-	dsi->pdata = pdata;
+	dsi->pdata = of_device_get_match_data(dev);
+	platform_set_drvdata(pdev, dsi);
 
-	rockchip_dsi_ioremap_resource(pdev, dsi);
-	rockchip_dsi_clk_get(dsi);
-	rockchip_dsi_dphy_parse(dsi);
-	rockchip_dsi_grf_regmap(dsi);
-	rockchip_dsi_get_reset_handle(dsi);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dsi->base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(dsi->base))
+		return PTR_ERR(dsi->base);
+
+	dsi->pclk = devm_clk_get(dev, "pclk");
+	if (IS_ERR(dsi->pclk)) {
+		ret = PTR_ERR(dsi->pclk);
+		dev_err(dev, "Unable to get pclk: %d\n", ret);
+		return ret;
+	}
+
+	dsi->grf_regmap = syscon_regmap_lookup_by_phandle(np, "rockchip,grf");
+	if (IS_ERR(dsi->grf_regmap)) {
+		dev_err(dev, "Unable to get rockchip,grf\n");
+		return PTR_ERR(dsi->grf_regmap);
+	}
+
+	dsi->rst = devm_reset_control_get(dev, "apb");
+	if (IS_ERR(dsi->rst)) {
+		dev_err(dev, "failed to get reset control\n");
+		return PTR_ERR(dsi->rst);
+	}
+
+	ret = mipi_dphy_attach(dsi);
+	if (ret)
+		return ret;
 
 	dsi->dsi_host.ops = &dw_mipi_dsi_host_ops;
-	dsi->dsi_host.dev = &pdev->dev;
+	dsi->dsi_host.dev = dev;
 
 	ret = mipi_dsi_host_register(&dsi->dsi_host);
 	if (ret)
 		return ret;
 
-	platform_set_drvdata(pdev, dsi);
-	ret = component_add(&pdev->dev, &dw_mipi_dsi_ops);
+	ret = component_add(dev, &dw_mipi_dsi_ops);
 	if (ret)
 		mipi_dsi_host_unregister(&dsi->dsi_host);
 

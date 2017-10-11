@@ -446,14 +446,34 @@ static inline int property_enable(struct rockchip_typec_phy *tcphy,
 	return regmap_write(tcphy->grf_regs, reg->offset, val | mask);
 }
 
+static void tcphy_dp_aux_set_flip(struct rockchip_typec_phy *tcphy)
+{
+	u16 tx_ana_ctrl_reg_1;
+
+	/*
+	 * Select the polarity of the xcvr:
+	 * 1, Reverses the polarity (If TYPEC, Pulls ups aux_p and pull
+	 * down aux_m)
+	 * 0, Normal polarity (if TYPEC, pulls up aux_m and pulls down
+	 * aux_p)
+	 */
+	tx_ana_ctrl_reg_1 = readl(tcphy->base + TX_ANA_CTRL_REG_1);
+	if (!tcphy->flip)
+		tx_ana_ctrl_reg_1 |= BIT(12);
+	else
+		tx_ana_ctrl_reg_1 &= ~BIT(12);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
+}
+
 static void tcphy_dp_aux_calibration(struct rockchip_typec_phy *tcphy)
 {
+	u16 tx_ana_ctrl_reg_1;
 	u16 rdata, rdata2, val;
 
 	/* disable txda_cal_latch_en for rewrite the calibration values */
-	rdata = readl(tcphy->base + TX_ANA_CTRL_REG_1);
-	val = rdata & 0xdfff;
-	writel(val, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 = readl(tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 &= ~BIT(13);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
 
 	/*
 	 * read a resistor calibration code from CMN_TXPUCAL_CTRL[6:0] and
@@ -475,9 +495,8 @@ static void tcphy_dp_aux_calibration(struct rockchip_typec_phy *tcphy)
 	 * Activate this signal for 1 clock cycle to sample new calibration
 	 * values.
 	 */
-	rdata = readl(tcphy->base + TX_ANA_CTRL_REG_1);
-	val = rdata | 0x2000;
-	writel(val, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |= BIT(13);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
 	usleep_range(150, 200);
 
 	/* set TX Voltage Level and TX Deemphasis to 0 */
@@ -485,8 +504,10 @@ static void tcphy_dp_aux_calibration(struct rockchip_typec_phy *tcphy)
 	/* re-enable decap */
 	writel(0x100, tcphy->base + TX_ANA_CTRL_REG_2);
 	writel(0x300, tcphy->base + TX_ANA_CTRL_REG_2);
-	writel(0x2008, tcphy->base + TX_ANA_CTRL_REG_1);
-	writel(0x2018, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |= BIT(3);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |= BIT(4);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
 
 	writel(0, tcphy->base + TX_ANA_CTRL_REG_5);
 
@@ -497,8 +518,10 @@ static void tcphy_dp_aux_calibration(struct rockchip_typec_phy *tcphy)
 	writel(0x1001, tcphy->base + TX_ANA_CTRL_REG_4);
 
 	/* re-enables Bandgap reference for LDO */
-	writel(0x2098, tcphy->base + TX_ANA_CTRL_REG_1);
-	writel(0x2198, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |= BIT(7);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |= BIT(8);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
 
 	/*
 	 * re-enables the transmitter pre-driver, driver data selection MUX,
@@ -508,27 +531,26 @@ static void tcphy_dp_aux_calibration(struct rockchip_typec_phy *tcphy)
 	writel(0x303, tcphy->base + TX_ANA_CTRL_REG_2);
 
 	/*
-	 * BIT 12: Controls auxda_polarity, which selects the polarity of the
-	 * xcvr:
-	 * 1, Reverses the polarity (If TYPEC, Pulls ups aux_p and pull
-	 * down aux_m)
-	 * 0, Normal polarity (if TYPE_C, pulls up aux_m and pulls down
-	 * aux_p)
+	 * Do some magic undocumented stuff, some of which appears to
+	 * undo the "re-enables Bandgap reference for LDO" above.
 	 */
-	val = 0xa078;
-	if (!tcphy->flip)
-		val |= BIT(12);
-	writel(val, tcphy->base + TX_ANA_CTRL_REG_1);
+	tx_ana_ctrl_reg_1 |=  BIT(15);
+	tx_ana_ctrl_reg_1 &= ~BIT(8);
+	tx_ana_ctrl_reg_1 &= ~BIT(7);
+	tx_ana_ctrl_reg_1 |=  BIT(6);
+	tx_ana_ctrl_reg_1 |=  BIT(5);
+	writel(tx_ana_ctrl_reg_1, tcphy->base + TX_ANA_CTRL_REG_1);
 
 	writel(0, tcphy->base + TX_ANA_CTRL_REG_3);
 	writel(0, tcphy->base + TX_ANA_CTRL_REG_4);
 	writel(0, tcphy->base + TX_ANA_CTRL_REG_5);
 
 	/*
-	 * Controls low_power_swing_en, set the voltage swing of the driver
-	 * to 400mv. The values	below are peak to peak (differential) values.
+	 * Controls low_power_swing_en, don't set the voltage swing of the
+	 * driver to 400mv. The values below are peak to peak (differential)
+	 * values.
 	 */
-	writel(4, tcphy->base + TXDA_COEFF_CALC_CTRL);
+	writel(0, tcphy->base + TXDA_COEFF_CALC_CTRL);
 	writel(0, tcphy->base + TXDA_CYA_AUXDA_CYA);
 
 	/* Controls tx_high_z_tm_en */
@@ -558,6 +580,7 @@ static int tcphy_phy_init(struct rockchip_typec_phy *tcphy, u8 mode)
 	reset_control_deassert(tcphy->tcphy_rst);
 
 	property_enable(tcphy, &cfg->typec_conn_dir, tcphy->flip);
+	tcphy_dp_aux_set_flip(tcphy);
 
 	tcphy_cfg_24m(tcphy);
 
@@ -625,7 +648,7 @@ static int tcphy_get_mode(struct rockchip_typec_phy *tcphy)
 	struct extcon_dev *edev = tcphy->extcon;
 	union extcon_property_value property;
 	unsigned int id;
-	bool dfp, ufp, dp;
+	bool ufp, dp;
 	u8 mode;
 	int ret;
 
@@ -637,7 +660,6 @@ static int tcphy_get_mode(struct rockchip_typec_phy *tcphy)
 	}
 
 	ufp = extcon_get_state(edev, EXTCON_USB);
-	dfp = extcon_get_state(edev, EXTCON_USB_HOST);
 	dp = extcon_get_state(edev, EXTCON_DISP_DP);
 
 	mode = MODE_DFP_USB;

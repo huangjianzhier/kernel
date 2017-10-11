@@ -1306,6 +1306,8 @@
 		interrupts = <GIC_SPI 19 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&cru SCLK_MIPIDSI_24M>, <&cru PCLK_MIPI_DSI0>;
 		clock-names = "ref", "pclk";
+		resets = <&cru SRST_MIPIDSI0>;
+		reset-names = "apb";
 		power-domains = <&power RK3288_PD_VIO>;
 		rockchip,grf = <&grf>;
 		#address-cells = <1>;
@@ -1338,6 +1340,8 @@
 		interrupts = <GIC_SPI 20 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&cru SCLK_MIPIDSI_24M>, <&cru PCLK_MIPI_DSI1>;
 		clock-names = "ref", "pclk";
+		resets = <&cru SRST_MIPIDSI1>;
+		reset-names = "apb";
 		power-domains = <&power RK3288_PD_VIO>;
 		rockchip,grf = <&grf>;
 		#address-cells = <1>;
@@ -1438,8 +1442,9 @@
 		interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&cru  PCLK_HDMI_CTRL>, <&cru SCLK_HDMI_HDCP>;
 		clock-names = "iahb", "isfr";
-		pinctrl-names = "default";
+		pinctrl-names = "default", "sleep";
 		pinctrl-0 = <&hdmi_ddc>;
+		pinctrl-1 = <&hdmi_gpio>;
 		power-domains = <&power RK3288_PD_VIO>;
 		status = "disabled";
 
@@ -1765,6 +1770,13 @@
 		};
 
 		hdmi {
+			hdmi_gpio: hdmi-gpio {
+				rockchip,pins = <7 19 RK_FUNC_GPIO
+						 &pcfg_pull_none>,
+						<7 20 RK_FUNC_GPIO
+						 &pcfg_pull_none>;
+			};
+
 			hdmi_ddc: hdmi-ddc {
 				rockchip,pins = <7 19 RK_FUNC_2 &pcfg_pull_none>,
 						<7 20 RK_FUNC_2 &pcfg_pull_none>;
@@ -1860,8 +1872,11 @@
 						<6 1 RK_FUNC_1 &pcfg_pull_none>,
 						<6 2 RK_FUNC_1 &pcfg_pull_none>,
 						<6 3 RK_FUNC_1 &pcfg_pull_none>,
-						<6 4 RK_FUNC_1 &pcfg_pull_none>,
-						<6 8 RK_FUNC_1 &pcfg_pull_none>;
+						<6 4 RK_FUNC_1 &pcfg_pull_none>;
+			};
+
+			i2s0_mclk: i2s0-mclk {
+				rockchip,pins = <6 8 RK_FUNC_1 &pcfg_pull_none>;
 			};
 		};
 
