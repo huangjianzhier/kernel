@@ -31,6 +31,20 @@
 #include <drm/drm_mode.h>
 #include <drm/drm_plane_helper.h>
 
+static void crtc_commit_free(struct kref *kref)
+{
+	struct drm_crtc_commit *commit =
+		container_of(kref, struct drm_crtc_commit, ref);
+
+	kfree(commit);
+}
+
+void drm_crtc_commit_put(struct drm_crtc_commit *commit)
+{
+	kref_put(&commit->ref, crtc_commit_free);
+}
+EXPORT_SYMBOL(drm_crtc_commit_put);
+
 /**
  * drm_atomic_state_default_release -
  * release memory initialized by drm_atomic_state_init
@@ -45,6 +59,7 @@ void drm_atomic_state_default_release(struct drm_atomic_state *state)
 	kfree(state->connector_states);
 	kfree(state->crtcs);
 	kfree(state->crtc_states);
+	kfree(state->crtc_commits);
 	kfree(state->planes);
 	kfree(state->plane_states);
 }
@@ -75,6 +90,10 @@ drm_atomic_state_init(struct drm_device *dev, struct drm_atomic_state *state)
 	state->crtc_states = kcalloc(dev->mode_config.num_crtc,
 				     sizeof(*state->crtc_states), GFP_KERNEL);
 	if (!state->crtc_states)
+		goto fail;
+	state->crtc_commits = kcalloc(dev->mode_config.num_crtc,
+				     sizeof(*state->crtc_commits), GFP_KERNEL);
+	if (!state->crtc_commits)
 		goto fail;
 	state->planes = kcalloc(dev->mode_config.num_total_plane,
 				sizeof(*state->planes), GFP_KERNEL);
@@ -176,6 +195,14 @@ void drm_atomic_state_default_clear(struct drm_atomic_state *state)
 
 		crtc->funcs->atomic_destroy_state(crtc,
 						  state->crtc_states[i]);
+
+		if (state->crtc_commits[i]) {
+			kfree(state->crtc_commits[i]->event);
+			state->crtc_commits[i]->event = NULL;
+			drm_crtc_commit_put(state->crtc_commits[i]);
+		}
+
+		state->crtc_commits[i] = NULL;
 		state->crtcs[i] = NULL;
 		state->crtc_states[i] = NULL;
 	}
@@ -1460,44 +1487,23 @@ static struct drm_pending_vblank_event *create_vblank_event(
 		struct drm_device *dev, struct drm_file *file_priv, uint64_t user_data)
 {
 	struct drm_pending_vblank_event *e = NULL;
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->event_lock, flags);
-	if (file_priv->event_space < sizeof e->event) {
-		spin_unlock_irqrestore(&dev->event_lock, flags);
-		goto out;
-	}
-	file_priv->event_space -= sizeof e->event;
-	spin_unlock_irqrestore(&dev->event_lock, flags);
+	int ret;
 
 	e = kzalloc(sizeof *e, GFP_KERNEL);
-	if (e == NULL) {
-		spin_lock_irqsave(&dev->event_lock, flags);
-		file_priv->event_space += sizeof e->event;
-		spin_unlock_irqrestore(&dev->event_lock, flags);
-		goto out;
-	}
+	if (!e)
+		return NULL;
 
 	e->event.base.type = DRM_EVENT_FLIP_COMPLETE;
-	e->event.base.length = sizeof e->event;
+	e->event.base.length = sizeof(e->event);
 	e->event.user_data = user_data;
-	e->base.event = &e->event.base;
-	e->base.file_priv = file_priv;
-	e->base.destroy = (void (*) (struct drm_pending_event *)) kfree;
 
-out:
+	ret = drm_event_reserve_init(dev, file_priv, &e->base, &e->event.base);
+	if (ret) {
+		kfree(e);
+		return NULL;
+	}
+
 	return e;
-}
-
-static void destroy_vblank_event(struct drm_device *dev,
-		struct drm_file *file_priv, struct drm_pending_vblank_event *e)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&dev->event_lock, flags);
-	file_priv->event_space += sizeof e->event;
-	spin_unlock_irqrestore(&dev->event_lock, flags);
-	kfree(e);
 }
 
 static int atomic_set_prop(struct drm_atomic_state *state,
@@ -1759,8 +1765,7 @@ out:
 			if (!crtc_state->event)
 				continue;
 
-			destroy_vblank_event(dev, file_priv,
-					     crtc_state->event);
+			drm_event_cancel_free(dev, &crtc_state->event->base);
 		}
 	}
 
