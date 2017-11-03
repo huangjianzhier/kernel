@@ -447,13 +447,12 @@ drm_atomic_replace_property_blob(struct drm_property_blob **blob,
 }
 
 int
-drm_atomic_replace_property_blob_from_id(struct drm_crtc *crtc,
+drm_atomic_replace_property_blob_from_id(struct drm_device *dev,
 					 struct drm_property_blob **blob,
 					 uint64_t blob_id,
 					 ssize_t expected_size,
 					 bool *replaced)
 {
-	struct drm_device *dev = crtc->dev;
 	struct drm_property_blob *new_blob = NULL;
 
 	if (blob_id != 0) {
@@ -504,7 +503,7 @@ int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 		drm_property_unreference_blob(mode);
 		return ret;
 	} else if (property == config->degamma_lut_property) {
-		ret = drm_atomic_replace_property_blob_from_id(crtc,
+		ret = drm_atomic_replace_property_blob_from_id(dev,
 					&state->degamma_lut,
 					val,
 					-1,
@@ -512,7 +511,7 @@ int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 		state->color_mgmt_changed = replaced;
 		return ret;
 	} else if (property == config->ctm_property) {
-		ret = drm_atomic_replace_property_blob_from_id(crtc,
+		ret = drm_atomic_replace_property_blob_from_id(dev,
 					&state->ctm,
 					val,
 					sizeof(struct drm_color_ctm),
@@ -520,7 +519,7 @@ int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 		state->color_mgmt_changed = replaced;
 		return ret;
 	} else if (property == config->gamma_lut_property) {
-		ret = drm_atomic_replace_property_blob_from_id(crtc,
+		ret = drm_atomic_replace_property_blob_from_id(dev,
 					&state->gamma_lut,
 					val,
 					-1,
@@ -968,6 +967,8 @@ int drm_atomic_connector_set_property(struct drm_connector *connector,
 {
 	struct drm_device *dev = connector->dev;
 	struct drm_mode_config *config = &dev->mode_config;
+	bool replaced = false;
+	int ret;
 
 	if (property == config->prop_crtc_id) {
 		struct drm_crtc *crtc = drm_crtc_find(dev, val);
@@ -1002,6 +1003,14 @@ int drm_atomic_connector_set_property(struct drm_connector *connector,
 		state->tv.saturation = val;
 	} else if (property == config->tv_hue_property) {
 		state->tv.hue = val;
+	} else if (property == config->hdr_source_metadata_property) {
+		ret = drm_atomic_replace_property_blob_from_id(dev,
+				&state->hdr_source_metadata_blob_ptr,
+				val,
+				-1,
+				&replaced);
+		state->hdr_metadata_changed |= replaced;
+		return ret;
 	} else if (connector->funcs->atomic_set_property) {
 		return connector->funcs->atomic_set_property(connector,
 				state, property, val);
@@ -1403,6 +1412,9 @@ int drm_atomic_check_only(struct drm_atomic_state *state)
 	if (config->funcs->atomic_check)
 		ret = config->funcs->atomic_check(state->dev, state);
 
+	if (ret)
+		return ret;
+
 	if (!state->allow_modeset) {
 		for_each_crtc_in_state(state, crtc, crtc_state, i) {
 			if (drm_atomic_crtc_needs_modeset(crtc_state)) {
@@ -1413,7 +1425,7 @@ int drm_atomic_check_only(struct drm_atomic_state *state)
 		}
 	}
 
-	return ret;
+	return 0;
 }
 EXPORT_SYMBOL(drm_atomic_check_only);
 

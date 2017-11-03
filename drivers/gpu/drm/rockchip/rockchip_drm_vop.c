@@ -414,6 +414,26 @@ static enum vop_data_format vop_convert_format(uint32_t format)
 	}
 }
 
+static bool is_uv_swap(uint32_t bus_format, uint32_t output_mode)
+{
+	/*
+	 * FIXME:
+	 *
+	 * There is no media type for YUV444 output,
+	 * so when out_mode is AAAA or P888, assume output is YUV444 on
+	 * yuv format.
+	 *
+	 * From H/W testing, YUV444 mode need a rb swap.
+	 */
+	if ((bus_format == MEDIA_BUS_FMT_YUV8_1X24 ||
+	     bus_format == MEDIA_BUS_FMT_YUV10_1X30) &&
+	    (output_mode == ROCKCHIP_OUT_MODE_AAAA ||
+	     output_mode == ROCKCHIP_OUT_MODE_P888))
+		return true;
+	else
+		return false;
+}
+
 static bool is_yuv_output(uint32_t bus_format)
 {
 	switch (bus_format) {
@@ -1992,6 +2012,11 @@ static void vop_crtc_enable(struct drm_crtc *crtc)
 	    !(vop_data->feature & VOP_FEATURE_OUTPUT_10BIT))
 		s->output_mode = ROCKCHIP_OUT_MODE_P888;
 
+	if (is_uv_swap(s->bus_format, s->output_mode))
+		VOP_CTRL_SET(vop, dsp_data_swap, DSP_RB_SWAP);
+	else
+		VOP_CTRL_SET(vop, dsp_data_swap, 0);
+
 	VOP_CTRL_SET(vop, out_mode, s->output_mode);
 	switch (s->bus_format) {
 	case MEDIA_BUS_FMT_RGB565_1X16:
@@ -2829,7 +2854,7 @@ static int vop_crtc_atomic_set_property(struct drm_crtc *crtc,
 		bool replaced;
 		ssize_t size = vop->cabc_lut_len * 4;
 
-		return drm_atomic_replace_property_blob_from_id(crtc,
+		return drm_atomic_replace_property_blob_from_id(crtc->dev,
 								&s->cabc_lut,
 								val,
 								size,
