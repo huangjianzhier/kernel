@@ -684,6 +684,7 @@ struct drm_connector_state {
 	 */
 	struct drm_property_blob *hdr_source_metadata_blob_ptr;
 	bool hdr_metadata_changed : 1;
+	uint64_t blob_id;
 };
 
 /**
@@ -951,6 +952,8 @@ struct drm_connector {
 	struct drm_property_blob *path_blob_ptr;
 
 	struct drm_property_blob *tile_blob_ptr;
+
+	struct drm_property_blob *hdr_panel_blob_ptr;
 
 	uint8_t polled; /* DRM_CONNECTOR_POLL_* */
 
@@ -1637,7 +1640,7 @@ struct drm_mode_config {
 	 * This will be provided by userspace compositors based on HDR content
 	 */
 	struct drm_property *hdr_source_metadata_property;
-
+	struct drm_property *hdr_panel_metadata_property;
 	/* dumb ioctl parameters */
 	uint32_t preferred_depth, prefer_shadow;
 
@@ -1813,6 +1816,8 @@ extern int drm_mode_connector_set_path_property(struct drm_connector *connector,
 int drm_mode_connector_set_tile_property(struct drm_connector *connector);
 extern int drm_mode_connector_update_edid_property(struct drm_connector *connector,
 						   const struct edid *edid);
+int drm_mode_connector_update_hdr_property(struct drm_connector *connector,
+					   const struct hdr_static_metadata *data);
 
 extern int drm_display_info_set_bus_formats(struct drm_display_info *info,
 					    const u32 *formats,

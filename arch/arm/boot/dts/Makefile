@@ -522,6 +522,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3128-fireprime.dtb \
 	rk3188-radxarock.dtb \
 	rk3228-evb.dtb \
+	rk3229-at-3nod.dtb \
 	rk3229-echo-v10.dtb \
 	rk3229-evb.dtb \
 	rk3229-gva-sdk.dtb \
@@ -530,6 +531,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3288-evb-android-rk818-edp.dtb \
 	rk3288-evb-android-rk818-lvds.dtb \
 	rk3288-evb-android-rk818-mipi.dtb \
+	rk3288-evb-android-rk818-mipi-edp.dtb \
 	rk3288-evb-rk808.dtb \
 	rk3288-fennec.dtb \
 	rk3288-firefly-beta.dtb \
