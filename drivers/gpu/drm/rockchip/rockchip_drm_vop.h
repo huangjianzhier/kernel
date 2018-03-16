@@ -173,6 +173,9 @@ struct vop_ctrl {
 	struct vop_reg afbdc_pic_size;
 	struct vop_reg afbdc_hdr_ptr;
 	struct vop_reg afbdc_rstn;
+	struct vop_reg afbdc_pic_vir_width;
+	struct vop_reg afbdc_pic_offset;
+	struct vop_reg afbdc_axi_ctrl;
 
 	/* CABC */
 	struct vop_reg cabc_total_num;
@@ -207,6 +210,7 @@ struct vop_ctrl {
 	struct vop_reg level2_overlay_en;
 	struct vop_reg alpha_hard_calc;
 	struct vop_reg hdr2sdr_en;
+	struct vop_reg hdr2sdr_en_win0_csc;
 	struct vop_reg hdr2sdr_src_min;
 	struct vop_reg hdr2sdr_src_max;
 	struct vop_reg hdr2sdr_normfaceetf;
@@ -224,6 +228,7 @@ struct vop_ctrl {
 	struct vop_reg st2084oetf_post_conv_en;
 	struct vop_reg win_csc_mode_sel;
 
+	struct vop_reg reg_done_frm;
 	struct vop_reg cfg_done;
 };
 
@@ -375,6 +380,8 @@ struct vop_win_phy {
 	struct vop_reg src_alpha_ctl;
 	struct vop_reg alpha_mode;
 	struct vop_reg alpha_en;
+	struct vop_reg alpha_pre_mul;
+	struct vop_reg global_alpha_val;
 	struct vop_reg key_color;
 	struct vop_reg key_en;
 };
@@ -391,10 +398,12 @@ struct vop_win_data {
 
 #define VOP_FEATURE_OUTPUT_10BIT	BIT(0)
 #define VOP_FEATURE_AFBDC		BIT(1)
+#define VOP_FEATURE_ALPHA_SCALE		BIT(2)
 
 #define WIN_FEATURE_HDR2SDR		BIT(0)
 #define WIN_FEATURE_SDR2HDR		BIT(1)
 #define WIN_FEATURE_PRE_OVERLAY		BIT(2)
+#define WIN_FEATURE_AFBDC		BIT(3)
 
 struct vop_rect {
 	int width;
@@ -433,13 +442,16 @@ struct vop_data {
 #define HWC_EMPTY_INTR			(1 << 11)
 #define POST_BUF_EMPTY_INTR		(1 << 12)
 #define PWM_GEN_INTR			(1 << 13)
+#define DMA_FINISH_INTR			(1 << 14)
 
 #define INTR_MASK			(DSP_HOLD_VALID_INTR | FS_INTR | \
 					 LINE_FLAG_INTR | BUS_ERROR_INTR | \
 					 FS_NEW_INTR | LINE_FLAG1_INTR | \
 					 WIN0_EMPTY_INTR | WIN1_EMPTY_INTR | \
 					 WIN2_EMPTY_INTR | WIN3_EMPTY_INTR | \
-					 HWC_EMPTY_INTR | POST_BUF_EMPTY_INTR)
+					 HWC_EMPTY_INTR | \
+					 POST_BUF_EMPTY_INTR | \
+					 DMA_FINISH_INTR)
 
 #define DSP_HOLD_VALID_INTR_EN(x)	((x) << 4)
 #define FS_INTR_EN(x)			((x) << 5)
